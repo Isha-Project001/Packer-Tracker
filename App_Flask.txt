@@ -1,0 +1,943 @@
+from flask import Flask, render_template, request, redirect, abort, Response, session, url_for, flash, jsonify
+import sqlite3
+import datetime
+import csv
+from urllib.parse import urlencode
+import os
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+from apscheduler.schedulers.background import BackgroundScheduler
+from dotenv import load_dotenv
+load_dotenv()
+from collections import defaultdict
+
+app = Flask(__name__)
+app.secret_key = 'your-very-secret-key'  # Change this to a secure random value!
+DB = 'packers.db'
+
+# === NEW: Manager password and auth function ===
+MANAGER_PASSWORD = 'Ankerpak2571'  # CHANGE THIS TO A STRONG PASSWORD
+
+# Email config from environment variables
+OUTLOOK_EMAIL = os.environ.get('OUTLOOK_EMAIL')
+OUTLOOK_PASSWORD = os.environ.get('OUTLOOK_PASSWORD')
+MANAGER_EMAILS = os.environ.get('MANAGER_EMAILS', '').split(',')  # comma-separated
+
+# Send email via Outlook SMTP
+def send_email(subject, body, recipients):
+    msg = MIMEMultipart()
+    msg['From'] = OUTLOOK_EMAIL
+    msg['To'] = ', '.join(recipients)
+    msg['Subject'] = subject
+    msg.attach(MIMEText(body, 'plain'))
+    try:
+        SMTP_SERVER = os.environ.get('SMTP_SERVER', 'smtp.us.exg7.exghost.com')
+        SMTP_PORT = int(os.environ.get('SMTP_PORT', 587))
+        with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
+            server.starttls()
+            server.login(OUTLOOK_EMAIL, OUTLOOK_PASSWORD)
+            server.sendmail(OUTLOOK_EMAIL, recipients, msg.as_string())
+    except Exception as e:
+        print(f"Failed to send email: {e}")
+
+# Query shift stats and send summary email
+def send_shift_summary(shift_name, start_time, end_time, use_today=False):
+    today = datetime.date.today()
+    if use_today:
+        # For second shift, always use today for both start and end
+        start_dt = f"{today} {start_time}"
+        end_dt = f"{today} {end_time}"
+    else:
+        start_dt = f"{today} {start_time}"
+        # If end_time is before start_time, it's next day
+        if end_time < start_time:
+            end_dt = f"{today + datetime.timedelta(days=1)} {end_time}"
+        else:
+            end_dt = f"{today} {end_time}"
+    with sqlite3.connect(DB) as conn:
+        c = conn.cursor()
+        c.execute('''
+            SELECT packer_name, SUM(case_count) as total_cases
+            FROM packed_orders
+            WHERE timestamp >= ? AND timestamp < ?
+            GROUP BY packer_name
+            ORDER BY total_cases DESC
+        ''', (start_dt, end_dt))
+        results = c.fetchall()
+    total_cases = sum(row[1] for row in results) if results else 0
+    best = results[0] if results else (None, 0)
+    worst = results[-1] if results else (None, 0)
+    body = f"""
+Packer Performance Summary ({shift_name})\n
+Time Range: {start_dt} to {end_dt}\n
+Total Cases Packed: {total_cases}\n"""
+    if results:
+        body += "\nCases Packed by Packer:\n"
+        for packer, cases in results:
+            body += f"- {packer}: {cases}\n"
+    if best[0]:
+        body += f"\nBest Performer: {best[0]} ({best[1]} cases)"
+    if worst[0] and worst[0] != best[0]:
+        body += f"\nLowest Performer: {worst[0]} ({worst[1]} cases)"
+    send_email(f"Packer App Daily Summary: {shift_name}", body, MANAGER_EMAILS)
+
+# Schedule the jobs (excluding Sundays - day_of_week=6)
+scheduler = BackgroundScheduler()
+scheduler.add_job(lambda: send_shift_summary('Shift 1 (7:00 AM - 3:30 PM)', '07:00:00', '15:30:00'), 'cron', hour=15, minute=30, day_of_week='mon-sat')
+# Second shift: 3:30 PM to 11:58 PM, same day (excluding Sundays)
+scheduler.add_job(lambda: send_shift_summary('Shift 2 (3:30 PM - 11:58 PM)', '15:30:00', '23:58:00', use_today=True), 'cron', hour=23, minute=58, day_of_week='mon-sat')
+scheduler.start()
+
+def check_manager_auth():
+    if not session.get('manager_authenticated'):
+        abort(403)
+
+def init_db():
+    with sqlite3.connect(DB) as conn:
+        c = conn.cursor()
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS packed_orders (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                transaction_number TEXT NOT NULL,
+                packer_name TEXT NOT NULL,
+                timestamp TEXT NOT NULL,
+                case_count INTEGER
+            )
+        ''')
+        conn.commit()
+
+init_db()
+
+@app.route('/', methods=['GET', 'POST'])
+def home():
+    if request.method == 'POST':
+        transaction_number = request.form.get('transaction_number', '').strip()
+        if not transaction_number:
+            return render_template('result.html', transaction=transaction_number, packer=None, timestamp=None, case_count=None)
+        with sqlite3.connect(DB) as conn:
+            c = conn.cursor()
+            c.execute('SELECT packer_name, timestamp, case_count FROM packed_orders WHERE transaction_number = ?', (transaction_number,))
+            result = c.fetchone()
+        if result:
+            packer_name, timestamp, case_count = result
+            return render_template('result.html', transaction=transaction_number, packer=packer_name, timestamp=timestamp, case_count=case_count)
+        else:
+            return render_template('result.html', transaction=transaction_number, packer=None, timestamp=None, case_count=None)
+    return render_template('home.html')
+
+@app.route('/submit', methods=['POST'])
+def submit():
+    packer_name = request.form['packer_name']
+    transaction_number = request.form['transaction_number']
+    case_count = request.form['case_count']
+    timestamp = datetime.datetime.now().isoformat(' ', 'seconds')
+
+    # Set packer_name in session for personal stats link
+    session['packer_name'] = packer_name
+
+    with sqlite3.connect(DB) as conn:
+        c = conn.cursor()
+        c.execute('SELECT 1 FROM packed_orders WHERE transaction_number = ?', (transaction_number,))
+        if c.fetchone():
+            flash('Transaction number already exists. Please enter a unique transaction number.', 'danger')
+            return redirect(url_for('home'))
+        c.execute('''
+            INSERT INTO packed_orders (transaction_number, packer_name, timestamp, case_count)
+            VALUES (?, ?, ?, ?)
+        ''', (transaction_number, packer_name, timestamp, case_count))
+        conn.commit()
+    flash('Order submitted successfully!', 'success')
+    return redirect(url_for('home'))
+
+@app.route('/search', methods=['GET', 'POST'])
+def search():
+    if request.method == 'GET':
+        return render_template('search.html')
+    transaction_number = request.form.get('transaction_number', '').strip()
+    if not transaction_number:
+        return render_template('result.html', transaction=transaction_number, packer=None, timestamp=None, case_count=None)
+    with sqlite3.connect(DB) as conn:
+        c = conn.cursor()
+        c.execute('SELECT packer_name, timestamp, case_count FROM packed_orders WHERE transaction_number = ?', (transaction_number,))
+        result = c.fetchone()
+    if result:
+        packer_name, timestamp, case_count = result
+        return render_template('result.html', transaction=transaction_number, packer=packer_name, timestamp=timestamp, case_count=case_count)
+    else:
+        return render_template('result.html', transaction=transaction_number, packer=None, timestamp=None, case_count=None)
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if request.method == 'POST':
+        password = request.form.get('password', '')
+        if password == MANAGER_PASSWORD:
+            session['manager_authenticated'] = True
+            flash('Manager login successful.', 'success')
+            return redirect(url_for('dashboard'))
+        else:
+            flash('Incorrect password.', 'danger')
+    return render_template('login.html')
+
+@app.route('/logout')
+def logout():
+    session.pop('manager_authenticated', None)
+    flash('Logged out successfully.', 'success')
+    return redirect(url_for('dashboard'))
+
+@app.route('/dashboard')
+def dashboard():
+    packer_filter = request.args.get('packer', '').strip()
+    start_date = request.args.get('start_date', '').strip()
+    end_date = request.args.get('end_date', '').strip()
+    transaction_number = request.args.get('transaction_number', '').strip()
+    min_case_count = request.args.get('min_case_count', '').strip()
+    max_case_count = request.args.get('max_case_count', '').strip()
+    page = int(request.args.get('page', 1))
+    per_page = 20
+
+    # Build WHERE clause
+    where_clauses = ['1=1']
+    params = []
+    if transaction_number:
+        where_clauses.append('transaction_number LIKE ?')
+        params.append(f'%{transaction_number}%')
+    if packer_filter:
+        where_clauses.append('packer_name LIKE ?')
+        params.append(f'%{packer_filter}%')
+    if start_date:
+        where_clauses.append('timestamp >= ?')
+        params.append(start_date)
+    if end_date:
+        where_clauses.append('timestamp <= ?')
+        params.append(end_date + ' 23:59:59')
+    if min_case_count:
+        where_clauses.append('case_count >= ?')
+        params.append(min_case_count)
+    if max_case_count:
+        where_clauses.append('case_count <= ?')
+        params.append(max_case_count)
+    where_sql = ' AND '.join(where_clauses)
+
+    # Get total count
+    count_query = f'SELECT COUNT(*) FROM packed_orders WHERE {where_sql}'
+    with sqlite3.connect(DB) as conn:
+        c = conn.cursor()
+        c.execute(count_query, params)
+        total_records = c.fetchone()[0]
+
+    total_pages = (total_records + per_page - 1) // per_page
+    offset = (page - 1) * per_page
+
+    # Get paginated records
+    query = f'SELECT id, transaction_number, packer_name, timestamp, case_count FROM packed_orders WHERE {where_sql} ORDER BY timestamp DESC LIMIT ? OFFSET ?'
+    paginated_params = params + [per_page, offset]
+    with sqlite3.connect(DB) as conn:
+        c = conn.cursor()
+        c.execute(query, paginated_params)
+        records = c.fetchall()
+
+    # Build pagination URLs
+    def build_url(new_page):
+        args = request.args.to_dict()
+        args['page'] = new_page
+        return f"/dashboard?{urlencode(args)}"
+    prev_url = build_url(page-1) if page > 1 else None
+    next_url = build_url(page+1) if page < total_pages else None
+    page_urls = [(p, build_url(p)) for p in range(1, total_pages+1)]
+
+    return render_template('dashboard.html', records=records, page=page, total_pages=total_pages,
+                           prev_url=prev_url, next_url=next_url, page_urls=page_urls,
+                           build_url=build_url, manager_authenticated=session.get('manager_authenticated', False))
+
+@app.route('/dashboard/export')
+def dashboard_export():
+    packer_filter = request.args.get('packer', '').strip()
+    start_date = request.args.get('start_date', '').strip()
+    end_date = request.args.get('end_date', '').strip()
+    transaction_number = request.args.get('transaction_number', '').strip()
+    min_case_count = request.args.get('min_case_count', '').strip()
+    max_case_count = request.args.get('max_case_count', '').strip()
+    export_scope = request.args.get('export_scope', 'all')
+    page = int(request.args.get('page', 1))
+    per_page = 20
+
+    # Build WHERE clause
+    where_clauses = ['1=1']
+    params = []
+    if transaction_number:
+        where_clauses.append('transaction_number LIKE ?')
+        params.append(f'%{transaction_number}%')
+    if packer_filter:
+        where_clauses.append('packer_name LIKE ?')
+        params.append(f'%{packer_filter}%')
+    if start_date:
+        where_clauses.append('timestamp >= ?')
+        params.append(start_date)
+    if end_date:
+        where_clauses.append('timestamp <= ?')
+        params.append(end_date + ' 23:59:59')
+    if min_case_count:
+        where_clauses.append('case_count >= ?')
+        params.append(min_case_count)
+    if max_case_count:
+        where_clauses.append('case_count <= ?')
+        params.append(max_case_count)
+    where_sql = ' AND '.join(where_clauses)
+
+    if export_scope == 'page':
+        offset = (page - 1) * per_page
+        query = f'SELECT transaction_number, packer_name, timestamp, case_count FROM packed_orders WHERE {where_sql} ORDER BY timestamp DESC LIMIT ? OFFSET ?'
+        query_params = params + [per_page, offset]
+    else:
+        query = f'SELECT transaction_number, packer_name, timestamp, case_count FROM packed_orders WHERE {where_sql} ORDER BY timestamp DESC'
+        query_params = params
+
+    with sqlite3.connect(DB) as conn:
+        c = conn.cursor()
+        c.execute(query, query_params)
+        records = c.fetchall()
+
+    def generate():
+        data = [
+            ['Transaction Number', 'Packer Name', 'Timestamp', 'Case Count']
+        ] + list(records)
+        for row in data:
+            yield ','.join(map(str, row)) + '\n'
+
+    return Response(generate(), mimetype='text/csv', headers={
+        'Content-Disposition': 'attachment; filename=packed_orders.csv'
+    })
+
+@app.route('/performance')
+def performance():
+    packer_filter = request.args.get('packer', '').strip()
+    start_date = request.args.get('start_date', '').strip()
+    end_date = request.args.get('end_date', '').strip()
+    page = int(request.args.get('page', 1))
+    per_page = 20
+
+    # Build WHERE clause
+    where_clauses = ['1=1']
+    params = []
+    if packer_filter:
+        where_clauses.append('packer_name LIKE ?')
+        params.append(f'%{packer_filter}%')
+    if start_date:
+        where_clauses.append('DATE(timestamp) >= ?')
+        params.append(start_date)
+    if end_date:
+        where_clauses.append('DATE(timestamp) <= ?')
+        params.append(end_date)
+    where_sql = ' AND '.join(where_clauses)
+
+    # Get total count
+    count_query = f'SELECT COUNT(*) FROM (SELECT packer_name, DATE(timestamp) as date FROM packed_orders WHERE {where_sql} GROUP BY packer_name, date)'
+    with sqlite3.connect(DB) as conn:
+        c = conn.cursor()
+        c.execute(count_query, params)
+        total_records = c.fetchone()[0]
+
+    total_pages = (total_records + per_page - 1) // per_page
+    offset = (page - 1) * per_page
+
+    # Get paginated records
+    query = f'''
+        SELECT packer_name, DATE(timestamp) as date, SUM(case_count)
+        FROM packed_orders
+        WHERE {where_sql}
+        GROUP BY packer_name, date
+        ORDER BY date DESC, packer_name
+        LIMIT ? OFFSET ?
+    '''
+    paginated_params = params + [per_page, offset]
+    with sqlite3.connect(DB) as conn:
+        c = conn.cursor()
+        c.execute(query, paginated_params)
+        records = c.fetchall()
+
+    # Summary statistics for all filtered data (not just current page)
+    summary_stats = None
+    if packer_filter or start_date or end_date:
+        with sqlite3.connect(DB) as conn:
+            c = conn.cursor()
+            c.execute(f'''
+                SELECT packer_name, SUM(case_count) as total_cases
+                FROM packed_orders
+                WHERE {where_sql}
+                GROUP BY packer_name
+                ORDER BY total_cases DESC
+            ''', params)
+            packer_totals = c.fetchall()
+        total_cases = sum((row[1] or 0) for row in packer_totals) if packer_totals else 0
+        unique_packers = len(packer_totals)
+        avg_per_packer = round(total_cases / unique_packers, 2) if unique_packers else 0
+        best = (packer_totals[0][0], packer_totals[0][1] or 0) if packer_totals else (None, 0)
+        worst = (packer_totals[-1][0], packer_totals[-1][1] or 0) if packer_totals else (None, 0)
+        summary_stats = {
+            'total_cases': total_cases,
+            'unique_packers': unique_packers,
+            'avg_per_packer': avg_per_packer,
+            'best': best,
+            'worst': worst
+        }
+
+    # Build pagination URLs
+    def build_url(new_page):
+        args = request.args.to_dict()
+        args['page'] = new_page
+        return f"/performance?{urlencode(args)}"
+    prev_url = build_url(page-1) if page > 1 else None
+    next_url = build_url(page+1) if page < total_pages else None
+    page_urls = [(p, build_url(p)) for p in range(1, total_pages+1)]
+
+    return render_template('performance.html', records=records, page=page, total_pages=total_pages,
+                           prev_url=prev_url, next_url=next_url, page_urls=page_urls,
+                           summary_stats=summary_stats)
+
+@app.route('/performance/export')
+def performance_export():
+    packer_filter = request.args.get('packer', '').strip()
+    start_date = request.args.get('start_date', '').strip()
+    end_date = request.args.get('end_date', '').strip()
+    export_scope = request.args.get('export_scope', 'all')
+    page = int(request.args.get('page', 1))
+    per_page = 20
+
+    # Build WHERE clause
+    where_clauses = ['1=1']
+    params = []
+    if packer_filter:
+        where_clauses.append('packer_name LIKE ?')
+        params.append(f'%{packer_filter}%')
+    if start_date:
+        where_clauses.append('DATE(timestamp) >= ?')
+        params.append(start_date)
+    if end_date:
+        where_clauses.append('DATE(timestamp) <= ?')
+        params.append(end_date)
+    where_sql = ' AND '.join(where_clauses)
+
+    if export_scope == 'page':
+        offset = (page - 1) * per_page
+        query = f'''
+            SELECT packer_name, DATE(timestamp) as date, SUM(case_count)
+            FROM packed_orders
+            WHERE {where_sql}
+            GROUP BY packer_name, date
+            ORDER BY date DESC, packer_name
+            LIMIT ? OFFSET ?
+        '''
+        query_params = params + [per_page, offset]
+    else:
+        query = f'''
+            SELECT packer_name, DATE(timestamp) as date, SUM(case_count)
+            FROM packed_orders
+            WHERE {where_sql}
+            GROUP BY packer_name, date
+            ORDER BY date DESC, packer_name
+        '''
+        query_params = params
+
+    with sqlite3.connect(DB) as conn:
+        c = conn.cursor()
+        c.execute(query, query_params)
+        records = c.fetchall()
+
+    def generate():
+        data = [
+            ['Packer Name', 'Date', 'Total Cases Packed']
+        ] + list(records)
+        for row in data:
+            yield ','.join(map(str, row)) + '\n'
+
+    return Response(generate(), mimetype='text/csv', headers={
+        'Content-Disposition': 'attachment; filename=performance.csv'
+    })
+
+@app.route('/performance/chart')
+def performance_chart():
+    packer_filter = request.args.get('packer', '').strip()
+    start_date = request.args.get('start_date', '').strip()
+    end_date = request.args.get('end_date', '').strip()
+
+    with sqlite3.connect(DB) as conn:
+        c = conn.cursor()
+
+        if packer_filter:
+            query = '''
+                SELECT DATE(timestamp) as date, SUM(case_count)
+                FROM packed_orders
+                WHERE packer_name LIKE ?
+            '''
+            params = [f'%{packer_filter}%']
+
+            if start_date:
+                query += ' AND DATE(timestamp) >= ?'
+                params.append(start_date)
+            if end_date:
+                query += ' AND DATE(timestamp) <= ?'
+                params.append(end_date)
+
+            query += ' GROUP BY date ORDER BY date ASC'
+            c.execute(query, params)
+            raw_data = c.fetchall()
+
+            formatted_data = []
+            for date_str, total_cases in raw_data:
+                formatted_data.append((date_str, total_cases))  # keep full date
+
+            return render_template('performance_chart.html', data=formatted_data, single_packer=True, packer=packer_filter)
+
+        else:
+            query = '''
+                SELECT DATE(timestamp) as date, packer_name, SUM(case_count)
+                FROM packed_orders
+                WHERE 1=1
+            '''
+            params = []
+
+            if start_date:
+                query += ' AND DATE(timestamp) >= ?'
+                params.append(start_date)
+            if end_date:
+                query += ' AND DATE(timestamp) <= ?'
+                params.append(end_date)
+
+            query += ' GROUP BY date, packer_name ORDER BY date ASC, packer_name ASC'
+            c.execute(query, params)
+            raw_data = c.fetchall()
+
+            # Pass raw_data directly as 'data' for frontend JS to consume
+            return render_template('performance_chart.html',
+                                   data=raw_data,
+                                   single_packer=False,
+                                   packer=None)
+
+@app.route('/edit/<int:id>', methods=['GET', 'POST'])
+def edit_entry(id):
+    check_manager_auth()
+
+    with sqlite3.connect(DB) as conn:
+        c = conn.cursor()
+
+        if request.method == 'POST':
+            packer_name = request.form['packer_name']
+            transaction_number = request.form['transaction_number']
+            case_count = request.form['case_count']
+            timestamp = datetime.datetime.now().isoformat(' ', 'seconds')
+
+            c.execute('''
+                UPDATE packed_orders
+                SET packer_name = ?, transaction_number = ?, case_count = ?, timestamp = ?
+                WHERE id = ?
+            ''', (packer_name, transaction_number, case_count, timestamp, id))
+            conn.commit()
+
+            return redirect('/dashboard')
+
+        else:
+            c.execute('SELECT transaction_number, packer_name, timestamp, case_count FROM packed_orders WHERE id = ?', (id,))
+            record = c.fetchone()
+
+            if not record:
+                return "Record not found.", 404
+
+            transaction_number, packer_name, timestamp, case_count = record
+            return render_template('edit.html', id=id, transaction_number=transaction_number, packer_name=packer_name, timestamp=timestamp, case_count=case_count)
+
+@app.route('/delete/<int:id>', methods=['POST'])
+def delete_entry(id):
+    check_manager_auth()
+
+    with sqlite3.connect(DB) as conn:
+        c = conn.cursor()
+        c.execute('DELETE FROM packed_orders WHERE id = ?', (id,))
+        conn.commit()
+
+    return redirect('/dashboard')
+
+@app.route('/about')
+def about():
+    return render_template('about.html')
+
+@app.route('/sw.js')
+def service_worker():
+    response = app.make_response(open('static/sw.js').read())
+    response.headers['Content-Type'] = 'application/javascript'
+    return response
+
+@app.route('/check_transaction')
+def check_transaction():
+    transaction_number = request.args.get('transaction_number', '').strip()
+    exists = False
+    if transaction_number:
+        with sqlite3.connect(DB) as conn:
+            c = conn.cursor()
+            c.execute('SELECT 1 FROM packed_orders WHERE transaction_number = ?', (transaction_number,))
+            if c.fetchone():
+                exists = True
+    return jsonify({'exists': exists})
+
+@app.route('/send_test_email')
+def send_test_email():
+    check_manager_auth()
+    send_email('Packer App Test Email', 'This is a test email from the Packer App automated reporting system.', MANAGER_EMAILS)
+    return 'Test email sent to managers.'
+
+@app.route('/analytics')
+def analytics():
+    # Independent date filters and chart types for each section
+    trend_start = request.args.get('trend_start_date', '')
+    trend_end = request.args.get('trend_end_date', '')
+    trend_chart_type = request.args.get('chart_type', 'bar')
+    packer_start = request.args.get('packer_start_date', '')
+    packer_end = request.args.get('packer_end_date', '')
+    packer_chart_type = request.args.get('packer_chart_type', 'bar')
+    shift_start = request.args.get('shift_start_date', '')
+    shift_end = request.args.get('shift_end_date', '')
+    shift_chart_type = request.args.get('shift_chart_type', 'bar')
+
+    # Trend chart data
+    trend_where = ['1=1']
+    trend_params = []
+    if trend_start:
+        trend_where.append('DATE(timestamp) >= ?')
+        trend_params.append(trend_start)
+    if trend_end:
+        trend_where.append('DATE(timestamp) <= ?')
+        trend_params.append(trend_end)
+    trend_sql = ' AND '.join(trend_where)
+    period_sql = "strftime('%Y-%m-%d', timestamp)"
+    with sqlite3.connect(DB) as conn:
+        c = conn.cursor()
+        c.execute(f'''
+            SELECT {period_sql} as period, SUM(case_count)
+            FROM packed_orders
+            WHERE {trend_sql}
+            GROUP BY period
+            ORDER BY period ASC
+        ''', trend_params)
+        trend = c.fetchall()
+    trend_data = [dict(x=[row[0] for row in trend], y=[row[1] for row in trend], type=trend_chart_type, name='Cases Packed')]
+    trend_table = trend  # List of (period, sum)
+
+    # Packer chart data
+    packer_where = ['1=1']
+    packer_params = []
+    if packer_start:
+        packer_where.append('DATE(timestamp) >= ?')
+        packer_params.append(packer_start)
+    if packer_end:
+        packer_where.append('DATE(timestamp) <= ?')
+        packer_params.append(packer_end)
+    packer_sql = ' AND '.join(packer_where)
+    with sqlite3.connect(DB) as conn:
+        c = conn.cursor()
+        c.execute(f'''
+            SELECT packer_name, SUM(case_count)
+            FROM packed_orders
+            WHERE {packer_sql}
+            GROUP BY packer_name
+            ORDER BY SUM(case_count) DESC
+        ''', packer_params)
+        packer_cmp = c.fetchall()
+    packer_data = [dict(x=[row[0] for row in packer_cmp], y=[row[1] for row in packer_cmp], type=packer_chart_type, name='Cases Packed')]
+    packer_table = packer_cmp  # List of (packer_name, sum)
+
+    # Shift chart data
+    shift_where = ['1=1']
+    shift_params = []
+    if shift_start:
+        shift_where.append('DATE(timestamp) >= ?')
+        shift_params.append(shift_start)
+    if shift_end:
+        shift_where.append('DATE(timestamp) <= ?')
+        shift_params.append(shift_end)
+    shift_sql = ' AND '.join(shift_where)
+    with sqlite3.connect(DB) as conn:
+        c = conn.cursor()
+        c.execute(f'''
+            SELECT CASE
+                WHEN CAST(strftime('%H', timestamp) AS INTEGER) < 15 OR (CAST(strftime('%H', timestamp) AS INTEGER) = 15 AND CAST(strftime('%M', timestamp) AS INTEGER) < 30)
+                    THEN 'Shift 1 (7:00-15:30)'
+                ELSE 'Shift 2 (15:30-00:00)'
+            END as shift, SUM(case_count)
+            FROM packed_orders
+            WHERE {shift_sql}
+            GROUP BY shift
+        ''', shift_params)
+        shift_cmp = c.fetchall()
+    shift_data = [dict(x=[row[0] for row in shift_cmp], y=[row[1] for row in shift_cmp], type=shift_chart_type, name='Cases Packed')]
+    shift_table = shift_cmp  # List of (shift, sum)
+
+    return render_template('analytics.html',
+        trend_data=trend_data,
+        packer_data=packer_data,
+        shift_data=shift_data,
+        trend_table=trend_table,
+        packer_table=packer_table,
+        shift_table=shift_table,
+        chart_type=trend_chart_type,
+        packer_chart_type=packer_chart_type,
+        shift_chart_type=shift_chart_type
+    )
+
+# Export endpoints for analytics
+@app.route('/analytics/export/csv')
+def analytics_export_csv():
+    start_date = request.args.get('start_date', '')
+    end_date = request.args.get('end_date', '')
+    packer = request.args.get('packer', '')
+    shift = request.args.get('shift', '')
+    period = request.args.get('period', '')
+    where_clauses = ['1=1']
+    params = []
+    if start_date:
+        where_clauses.append('DATE(timestamp) >= ?')
+        params.append(start_date)
+    if end_date:
+        where_clauses.append('DATE(timestamp) <= ?')
+        params.append(end_date)
+    if packer:
+        where_clauses.append('packer_name = ?')
+        params.append(packer)
+    if shift:
+        if shift == 'Shift 1 (7:00-15:30)':
+            where_clauses.append("(CAST(strftime('%H', timestamp) AS INTEGER) < 15 OR (CAST(strftime('%H', timestamp) AS INTEGER) = 15 AND CAST(strftime('%M', timestamp) AS INTEGER) < 30))")
+        elif shift == 'Shift 2 (15:30-00:00)':
+            where_clauses.append("(CAST(strftime('%H', timestamp) AS INTEGER) > 15 OR (CAST(strftime('%H', timestamp) AS INTEGER) = 15 AND CAST(strftime('%M', timestamp) AS INTEGER) >= 30))")
+    where_sql = ' AND '.join(where_clauses)
+    period_sql = "strftime('%Y-%m-%d', timestamp)"
+    with sqlite3.connect(DB) as conn:
+        c = conn.cursor()
+        c.execute(f'''
+            SELECT {period_sql} as period, SUM(case_count)
+            FROM packed_orders
+            WHERE {where_sql}
+            GROUP BY period
+            ORDER BY period ASC
+        ''', params)
+        trend = c.fetchall()
+        c.execute(f'''
+            SELECT packer_name, SUM(case_count)
+            FROM packed_orders
+            WHERE {where_sql}
+            GROUP BY packer_name
+            ORDER BY SUM(case_count) DESC
+        ''', params)
+        packer_cmp = c.fetchall()
+        c.execute(f'''
+            SELECT CASE
+                WHEN CAST(strftime('%H', timestamp) AS INTEGER) < 15 OR (CAST(strftime('%H', timestamp) AS INTEGER) = 15 AND CAST(strftime('%M', timestamp) AS INTEGER) < 30)
+                    THEN 'Shift 1 (7:00-15:30)'
+                ELSE 'Shift 2 (15:30-00:00)'
+            END as shift, SUM(case_count)
+            FROM packed_orders
+            WHERE {where_sql}
+            GROUP BY shift
+        ''', params)
+        shift_cmp = c.fetchall()
+    import io
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(['Date', 'Cases Packed'])
+    for row in trend:
+        writer.writerow(row)
+    writer.writerow([])
+    writer.writerow(['Packer', 'Cases Packed'])
+    for row in packer_cmp:
+        writer.writerow(row)
+    writer.writerow([])
+    writer.writerow(['Shift', 'Cases Packed'])
+    for row in shift_cmp:
+        writer.writerow(row)
+    output.seek(0)
+    return Response(output, mimetype='text/csv', headers={
+        'Content-Disposition': 'attachment; filename=analytics_export.csv'
+    })
+
+@app.route('/leaderboard', methods=['GET', 'POST'])
+def leaderboard():
+    import datetime
+    from collections import defaultdict
+    today = datetime.date.today()
+    # Date ranges
+    start_of_week = today - datetime.timedelta(days=today.weekday())
+    start_of_last_week = start_of_week - datetime.timedelta(days=7)
+    start_of_month = today.replace(day=1)
+    start_of_last_month = (start_of_month - datetime.timedelta(days=1)).replace(day=1)
+    # Helper to get leaderboard for a period
+    def get_leaderboard(start_date=None, end_date=None, shift=None):
+        where = ['1=1']
+        params = []
+        if start_date:
+            where.append('DATE(timestamp) >= ?')
+            params.append(str(start_date))
+        if end_date:
+            where.append('DATE(timestamp) <= ?')
+            params.append(str(end_date))
+        if shift == 'Shift 1 (7:00-15:30)':
+            where.append("(CAST(strftime('%H', timestamp) AS INTEGER) < 15 OR (CAST(strftime('%H', timestamp) AS INTEGER) = 15 AND CAST(strftime('%M', timestamp) AS INTEGER) < 30))")
+        elif shift == 'Shift 2 (15:30-00:00)':
+            where.append("(CAST(strftime('%H', timestamp) AS INTEGER) > 15 OR (CAST(strftime('%H', timestamp) AS INTEGER) = 15 AND CAST(strftime('%M', timestamp) AS INTEGER) >= 30))")
+        where_sql = ' AND '.join(where)
+        with sqlite3.connect(DB) as conn:
+            c = conn.cursor()
+            c.execute(f'''
+                SELECT packer_name, SUM(case_count) as total_cases
+                FROM packed_orders
+                WHERE {where_sql}
+                GROUP BY packer_name
+                ORDER BY total_cases DESC
+            ''', params)
+            return c.fetchall()
+    # Get filters
+    tab = request.args.get('tab', 'daily')
+    shift = request.args.get('shift', '')
+    start_date = request.args.get('start_date', '')
+    end_date = request.args.get('end_date', '')
+    # Leaderboard data
+    leaderboard = {}
+    # Daily
+    if tab == 'daily':
+        daily = get_leaderboard(start_date=start_date or today.strftime('%Y-%m-%d'), end_date=end_date or start_date or today.strftime('%Y-%m-%d'), shift=shift)
+    else:
+        daily = get_leaderboard(start_date=start_date, end_date=end_date, shift=shift)
+    leaderboard['daily'] = []
+    for name, cases in daily:
+        badges = []
+        safe_cases = cases if cases is not None else 0
+        if safe_cases >= 1000:
+            badges.append('1000 Club')
+        leaderboard['daily'].append({'packer_name': name, 'cases_packed': safe_cases, 'badges': badges})
+    # Weekly
+    if tab == 'weekly' and (start_date or end_date):
+        week_start = datetime.datetime.strptime(start_date, '%Y-%m-%d').date() if start_date else start_of_week
+        week_end = datetime.datetime.strptime(end_date, '%Y-%m-%d').date() if end_date else today
+        weekly = get_leaderboard(start_date=week_start, end_date=week_end, shift=shift)
+        last_week_start = week_start - datetime.timedelta(days=7)
+        last_week_end = week_start - datetime.timedelta(days=1)
+        last_week = get_leaderboard(start_date=last_week_start, end_date=last_week_end, shift=shift)
+    else:
+        week_start = start_of_week
+        week_end = today
+        weekly = get_leaderboard(start_date=week_start, end_date=week_end, shift=shift)
+        last_week = get_leaderboard(start_date=start_of_last_week, end_date=start_of_week - datetime.timedelta(days=1), shift=shift)
+    last_week_dict = {name: cases for name, cases in last_week}
+    improvements = {}
+    for name, cases in weekly:
+        safe_cases = cases if cases is not None else 0
+        prev = last_week_dict.get(name, 0)
+        prev = prev if prev is not None else 0
+        improvements[name] = safe_cases - prev
+    most_improved = max(improvements, key=lambda k: improvements[k], default=None) if improvements else None
+    leaderboard['weekly'] = []
+    for name, cases in weekly:
+        badges = []
+        safe_cases = cases if cases is not None else 0
+        if name == most_improved and improvements[name] > 0:
+            badges.append('Most Improved')
+        if safe_cases >= 1000:
+            badges.append('1000 Club')
+        leaderboard['weekly'].append({'packer_name': name, 'cases_packed': safe_cases, 'badges': badges})
+    # Monthly
+    if tab == 'monthly' and (start_date or end_date):
+        month_start = datetime.datetime.strptime(start_date, '%Y-%m-%d').date() if start_date else start_of_month
+        month_end = datetime.datetime.strptime(end_date, '%Y-%m-%d').date() if end_date else today
+        monthly = get_leaderboard(start_date=month_start, end_date=month_end, shift=shift)
+    else:
+        month_start = start_of_month
+        month_end = today
+        monthly = get_leaderboard(start_date=month_start, end_date=month_end, shift=shift)
+    leaderboard['monthly'] = []
+    for name, cases in monthly:
+        badges = []
+        safe_cases = cases if cases is not None else 0
+        if safe_cases >= 1000:
+            badges.append('1000 Club')
+        leaderboard['monthly'].append({'packer_name': name, 'cases_packed': safe_cases, 'badges': badges})
+    # All-time
+    if tab == 'alltime' and (start_date or end_date):
+        alltime = get_leaderboard(start_date=start_date, end_date=end_date, shift=shift)
+    else:
+        alltime = get_leaderboard(shift=shift)
+    leaderboard['alltime'] = []
+    for name, cases in alltime:
+        badges = []
+        safe_cases = cases if cases is not None else 0
+        if safe_cases >= 10000:
+            badges.append('Legend')
+        elif safe_cases >= 1000:
+            badges.append('1000 Club')
+        leaderboard['alltime'].append({'packer_name': name, 'cases_packed': safe_cases, 'badges': badges})
+    # Recognition wall (mock for now)
+    recent_achievements = []
+    # Get all unique packer names for My Stats modal
+    with sqlite3.connect(DB) as conn:
+        c = conn.cursor()
+        c.execute('SELECT DISTINCT packer_name FROM packed_orders ORDER BY packer_name ASC')
+        packer_list = [row[0] for row in c.fetchall()]
+    if request.method == 'POST' and session.get('manager_authenticated'):
+        shoutout = request.form.get('shoutout', '').strip()
+        if shoutout:
+            recent_achievements.insert(0, f'Manager shout-out: {shoutout}')
+    return render_template('leaderboard.html', leaderboard=leaderboard, recent_achievements=recent_achievements, packer_list=packer_list)
+
+@app.route('/stats/<packer_name>')
+def stats(packer_name):
+    import datetime
+    today = datetime.date.today()
+    start_of_week = today - datetime.timedelta(days=today.weekday())
+    start_of_month = today.replace(day=1)
+    # Total cases packed
+    with sqlite3.connect(DB) as conn:
+        c = conn.cursor()
+        c.execute('SELECT SUM(case_count) FROM packed_orders WHERE packer_name = ?', (packer_name,))
+        total_cases = c.fetchone()[0] or 0
+        # Best day
+        c.execute('SELECT DATE(timestamp), SUM(case_count) FROM packed_orders WHERE packer_name = ? GROUP BY DATE(timestamp) ORDER BY SUM(case_count) DESC LIMIT 1', (packer_name,))
+        best_day = c.fetchone()
+        # Average per day
+        c.execute('SELECT COUNT(DISTINCT DATE(timestamp)) FROM packed_orders WHERE packer_name = ?', (packer_name,))
+        days_worked = c.fetchone()[0] or 1
+        avg_per_day = round(total_cases / days_worked, 2)
+        # Current streak (consecutive days with entries)
+        c.execute('SELECT DISTINCT DATE(timestamp) FROM packed_orders WHERE packer_name = ? ORDER BY DATE(timestamp) DESC', (packer_name,))
+        dates = [row[0] for row in c.fetchall()]
+    streak = 0
+    prev = None
+    for d in dates:
+        d = datetime.datetime.strptime(d, '%Y-%m-%d').date()
+        if prev is None or prev - d == datetime.timedelta(days=1):
+            streak += 1
+            prev = d
+        else:
+            break
+    # Badges
+    badges = []
+    if total_cases >= 10000:
+        badges.append('Legend')
+    elif total_cases >= 1000:
+        badges.append('1000 Club')
+    if streak >= 5:
+        badges.append(f'Streak {streak} Days')
+    # Trend data (last 30 days)
+    with sqlite3.connect(DB) as conn:
+        c = conn.cursor()
+        c.execute('''SELECT DATE(timestamp), SUM(case_count) FROM packed_orders WHERE packer_name = ? AND DATE(timestamp) >= ? GROUP BY DATE(timestamp) ORDER BY DATE(timestamp)''', (packer_name, (today - datetime.timedelta(days=29)).strftime('%Y-%m-%d')))
+        trend = c.fetchall()
+    # Rank (all-time)
+    with sqlite3.connect(DB) as conn:
+        c = conn.cursor()
+        c.execute('''SELECT packer_name, SUM(case_count) as total FROM packed_orders GROUP BY packer_name ORDER BY total DESC''')
+        all_packers = c.fetchall()
+    rank = 1
+    for name, _ in all_packers:
+        if name == packer_name:
+            break
+        rank += 1
+    return render_template('stats.html', packer_name=packer_name, total_cases=total_cases, best_day=best_day, avg_per_day=avg_per_day, streak=streak, badges=badges, trend=trend, rank=rank, total_packers=len(all_packers))
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=5000, debug=True)
