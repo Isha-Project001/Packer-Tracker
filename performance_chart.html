@@ -1,0 +1,514 @@
+{% extends 'base.html' %}
+
+{% block title %}Performance Chart{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <h1>Packer Performance Chart</h1>
+
+    <!-- Filter Form -->
+    <form method="get" action="/performance/chart" class="row g-3 align-items-center mb-4">
+        <div class="col-auto">
+            <label for="packer" class="col-form-label">Packer Name:</label>
+        </div>
+        <div class="col-auto">
+            <input type="text" id="packer" name="packer" class="form-control" value="{{ request.args.get('packer', '') }}">
+        </div>
+
+        <div class="col-auto">
+            <label for="start_date" class="col-form-label">Start Date:</label>
+        </div>
+        <div class="col-auto">
+            <input type="date" id="start_date" name="start_date" class="form-control" value="{{ request.args.get('start_date', '') }}">
+        </div>
+
+        <div class="col-auto">
+            <label for="end_date" class="col-form-label">End Date:</label>
+        </div>
+        <div class="col-auto">
+            <input type="date" id="end_date" name="end_date" class="form-control" value="{{ request.args.get('end_date', '') }}">
+        </div>
+
+        <div class="col-auto">
+            <button type="submit" class="btn btn-primary">Filter</button>
+            <button type="button" class="btn btn-secondary" onclick="window.location.href='/performance/chart'">Clear</button>
+        </div>
+    </form>
+
+    <!-- Chart Controls -->
+    <div class="row mb-3">
+        <div class="col-auto">
+            <label for="chartType" class="form-label">Chart Type:</label>
+            <select id="chartType" class="form-select">
+                <option value="bar">Bar</option>
+                <option value="line">Line</option>
+                <option value="combo">Bar + Line</option>
+            </select>
+        </div>
+        <div class="col-auto">
+            <label for="maxBars" class="form-label">Max Bars Visible:</label>
+            <select id="maxBars" class="form-select">
+                <option value="10">10</option>
+                <option value="20" selected>20</option>
+                <option value="30">30</option>
+                <option value="50">50</option>
+                <option value="all">All</option>
+            </select>
+        </div>
+        <div class="col-auto align-self-end">
+            <button id="exportBtn" class="btn btn-success">Export as PNG</button>
+        </div>
+    </div>
+
+    <!-- Chart Container with Scroll -->
+    <div class="card">
+        <div class="card-body">
+            <div class="chart-container" style="position: relative; height: 400px; overflow-x: auto; overflow-y: hidden;">
+                <div class="chart-wrapper" id="chartWrapper" style="height: 100%;">
+                    <canvas id="performanceChart"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Scroll Controls -->
+    <div class="row mt-3">
+        <div class="col-12 text-center">
+            <button id="scrollLeft" class="btn btn-outline-primary me-2">
+                <i class="bi bi-arrow-left"></i> Scroll Left
+            </button>
+            <button id="scrollRight" class="btn btn-outline-primary">
+                Scroll Right <i class="bi bi-arrow-right"></i>
+            </button>
+        </div>
+    </div>
+
+    <!-- Back Link -->
+    <div class="mt-4">
+        <a href="/performance" class="btn btn-link">← Back to Performance Table</a>
+    </div>
+</div>
+
+<!-- Chart.js CDN -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<!-- Chart.js Annotation Plugin CDN -->
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@1.4.0/dist/chartjs-plugin-annotation.min.js"></script>
+
+<script>
+    {% if single_packer %}
+        const rawData = {{ data | default([]) | tojson }};
+        const labels = rawData.map(item => item[0]); // full date (YYYY-MM-DD)
+        const values = rawData.map(item => item[1]);
+        // Calculate average
+        const avg = values.length ? (values.reduce((a, b) => a + b, 0) / values.length) : 0;
+        const avgArray = Array(values.length).fill(avg);
+        const avgLabel = 'Average (' + avg.toFixed(2) + ')';
+        
+        let chartInstance;
+        let currentMaxBars = 20;
+        
+        function renderChart(chartType, maxBars = currentMaxBars) {
+            const ctx = document.getElementById('performanceChart').getContext('2d');
+            if (chartInstance) chartInstance.destroy();
+            
+            // Limit data based on maxBars
+            let displayLabels = labels;
+            let displayValues = values;
+            let displayAvgArray = avgArray;
+            
+            if (maxBars !== 'all' && labels.length > maxBars) {
+                displayLabels = labels.slice(-maxBars);
+                displayValues = values.slice(-maxBars);
+                displayAvgArray = avgArray.slice(-maxBars);
+            }
+            
+            // Set chart wrapper width based on number of data points
+            const chartWrapper = document.getElementById('chartWrapper');
+            const minWidth = 800;
+            const barWidth = 60; // Approximate width per bar
+            const calculatedWidth = Math.max(minWidth, displayLabels.length * barWidth);
+            chartWrapper.style.width = calculatedWidth + 'px';
+            
+            let datasets = [];
+            if (chartType === 'bar' || chartType === 'combo') {
+                datasets.push({
+                    type: 'bar',
+                    label: '{{ packer }}',
+                    data: displayValues,
+                    backgroundColor: 'rgba(54, 162, 235, 0.7)',
+                    borderColor: 'rgba(54, 162, 235, 1)',
+                    borderWidth: 1
+                });
+            }
+            if (chartType === 'line' || chartType === 'combo') {
+                datasets.push({
+                    type: 'line',
+                    label: 'Line',
+                    data: displayValues,
+                    fill: false,
+                    borderColor: 'rgba(255, 99, 132, 1)',
+                    backgroundColor: 'rgba(255, 99, 132, 0.2)',
+                    tension: 0.2,
+                    pointRadius: 4
+                });
+            }
+            // Average line
+            datasets.push({
+                type: 'line',
+                label: avgLabel,
+                data: displayAvgArray,
+                fill: false,
+                borderColor: 'rgba(255, 206, 86, 1)',
+                borderDash: [8, 6],
+                pointRadius: 0,
+                borderWidth: 2
+            });
+            
+            chartInstance = new Chart(ctx, {
+                data: {
+                    labels: displayLabels,
+                    datasets: datasets
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        title: {
+                            display: true,
+                            text: 'Cases Packed Per Day for {{ packer }}'
+                        },
+                        legend: { display: true },
+                        annotation: {
+                            annotations: {
+                                avgLineLabel: {
+                                    type: 'label',
+                                    xValue: displayLabels.length - 1,
+                                    yValue: avg,
+                                    backgroundColor: 'rgba(255, 206, 86, 0.9)',
+                                    color: '#181818',
+                                    content: [avg.toFixed(2)],
+                                    font: { weight: 'bold', size: 14 },
+                                    position: {
+                                        x: 'end',
+                                        y: 'center'
+                                    },
+                                    padding: 6,
+                                    display: true
+                                }
+                            }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            ticks: {
+                                autoSkip: false,
+                                maxRotation: 45,
+                                minRotation: 0,
+                                font: { size: 10 }
+                            },
+                            grid: {
+                                display: true
+                            }
+                        },
+                        y: {
+                            beginAtZero: true,
+                            title: { display: true, text: 'Total Cases' }
+                        }
+                    },
+                    interaction: {
+                        intersect: false,
+                        mode: 'index'
+                    }
+                },
+                plugins: [Chart.registry.getPlugin('annotation')]
+            });
+        }
+        
+        // Initial render
+        renderChart('bar');
+        
+        // Chart type selector
+        document.getElementById('chartType').addEventListener('change', function() {
+            let val = this.value;
+            renderChart(val, currentMaxBars);
+        });
+        
+        // Max bars selector
+        document.getElementById('maxBars').addEventListener('change', function() {
+            currentMaxBars = this.value;
+            renderChart(document.getElementById('chartType').value, currentMaxBars);
+        });
+        
+        // Export button
+        document.getElementById('exportBtn').addEventListener('click', function() {
+            const url = chartInstance.toBase64Image();
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = 'performance_chart.png';
+            link.click();
+        });
+        
+        // Scroll controls
+        document.getElementById('scrollLeft').addEventListener('click', function() {
+            const container = document.querySelector('.chart-container');
+            const scrollAmount = Math.min(200, container.scrollLeft);
+            container.scrollBy({ left: -scrollAmount, behavior: 'smooth' });
+        });
+        
+        document.getElementById('scrollRight').addEventListener('click', function() {
+            const container = document.querySelector('.chart-container');
+            const maxScroll = container.scrollWidth - container.clientWidth;
+            const scrollAmount = Math.min(200, maxScroll - container.scrollLeft);
+            container.scrollBy({ left: scrollAmount, behavior: 'smooth' });
+        });
+        
+        // Update scroll button states based on scroll position
+        function updateScrollButtons() {
+            const container = document.querySelector('.chart-container');
+            const scrollLeftBtn = document.getElementById('scrollLeft');
+            const scrollRightBtn = document.getElementById('scrollRight');
+            
+            // Check if scrolling is possible
+            const canScrollLeft = container.scrollLeft > 0;
+            const canScrollRight = container.scrollLeft < (container.scrollWidth - container.clientWidth);
+            
+            // Update button appearance instead of disabling
+            scrollLeftBtn.classList.toggle('btn-outline-secondary', !canScrollLeft);
+            scrollLeftBtn.classList.toggle('btn-outline-primary', canScrollLeft);
+            scrollRightBtn.classList.toggle('btn-outline-secondary', !canScrollRight);
+            scrollRightBtn.classList.toggle('btn-outline-primary', canScrollRight);
+            
+            // Add visual feedback
+            if (!canScrollLeft) {
+                scrollLeftBtn.title = 'Already at the beginning';
+            } else {
+                scrollLeftBtn.title = 'Scroll left';
+            }
+            
+            if (!canScrollRight) {
+                scrollRightBtn.title = 'Already at the end';
+            } else {
+                scrollRightBtn.title = 'Scroll right';
+            }
+        }
+        
+        // Listen for scroll events to update button states
+        document.querySelector('.chart-container').addEventListener('scroll', updateScrollButtons);
+        
+        // Initial button state update
+        setTimeout(updateScrollButtons, 100);
+        
+    {% else %}
+        const rawData = {{ data | default([]) | tojson }};
+        // Each entry in rawData: [date, packer, total]
+        // Group by date for average line
+        const labels = rawData.map(([date, packer]) => `${date} - ${packer}`);
+        const values = rawData.map(([date, packer, total]) => total);
+        // Calculate average
+        const avg = values.length ? (values.reduce((a, b) => a + b, 0) / values.length) : 0;
+        const avgArray = Array(values.length).fill(avg);
+        const avgLabel = 'Average (' + avg.toFixed(2) + ')';
+        // Generate a unique color per bar (optional: cycle colors)
+        function getColor(index) {
+            const hue = (index * 47) % 360; // 47 to spread hues evenly
+            return `hsl(${hue}, 70%, 60%)`;
+        }
+        const backgroundColors = values.map((_, i) => getColor(i));
+        
+        let chartInstance;
+        let currentMaxBars = 20;
+        
+        function renderChart(chartType, maxBars = currentMaxBars) {
+            const ctx = document.getElementById('performanceChart').getContext('2d');
+            if (chartInstance) chartInstance.destroy();
+            
+            // Limit data based on maxBars
+            let displayLabels = labels;
+            let displayValues = values;
+            let displayAvgArray = avgArray;
+            let displayColors = backgroundColors;
+            
+            if (maxBars !== 'all' && labels.length > maxBars) {
+                displayLabels = labels.slice(-maxBars);
+                displayValues = values.slice(-maxBars);
+                displayAvgArray = avgArray.slice(-maxBars);
+                displayColors = backgroundColors.slice(-maxBars);
+            }
+            
+            // Set chart wrapper width based on number of data points
+            const chartWrapper = document.getElementById('chartWrapper');
+            const minWidth = 800;
+            const barWidth = 60; // Approximate width per bar
+            const calculatedWidth = Math.max(minWidth, displayLabels.length * barWidth);
+            chartWrapper.style.width = calculatedWidth + 'px';
+            
+            let datasets = [];
+            if (chartType === 'bar' || chartType === 'combo') {
+                datasets.push({
+                    type: 'bar',
+                    label: 'Cases Packed',
+                    data: displayValues,
+                    backgroundColor: displayColors,
+                    borderWidth: 1
+                });
+            }
+            if (chartType === 'line' || chartType === 'combo') {
+                datasets.push({
+                    type: 'line',
+                    label: 'Line',
+                    data: displayValues,
+                    fill: false,
+                    borderColor: 'rgba(255, 99, 132, 1)',
+                    backgroundColor: 'rgba(255, 99, 132, 0.2)',
+                    tension: 0.2,
+                    pointRadius: 4
+                });
+            }
+            // Average line
+            datasets.push({
+                type: 'line',
+                label: avgLabel,
+                data: displayAvgArray,
+                fill: false,
+                borderColor: 'rgba(255, 206, 86, 1)',
+                borderDash: [8, 6],
+                pointRadius: 0,
+                borderWidth: 2
+            });
+            
+            chartInstance = new Chart(ctx, {
+                data: {
+                    labels: displayLabels,
+                    datasets: datasets
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        title: {
+                            display: true,
+                            text: 'Cases Packed Per Packer Per Day (Separate Bars)'
+                        },
+                        legend: { display: true },
+                        annotation: {
+                            annotations: {
+                                avgLineLabel: {
+                                    type: 'label',
+                                    xValue: displayLabels.length - 1,
+                                    yValue: avg,
+                                    backgroundColor: 'rgba(255, 206, 86, 0.9)',
+                                    color: '#181818',
+                                    content: [avg.toFixed(2)],
+                                    font: { weight: 'bold', size: 14 },
+                                    position: {
+                                        x: 'end',
+                                        y: 'center'
+                                    },
+                                    padding: 6,
+                                    display: true
+                                }
+                            }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            ticks: {
+                                autoSkip: false,
+                                maxRotation: 45,
+                                minRotation: 0,
+                                font: { size: 10 }
+                            },
+                            grid: {
+                                display: true
+                            }
+                        },
+                        y: {
+                            beginAtZero: true,
+                            title: { display: true, text: 'Total Cases' }
+                        }
+                    },
+                    interaction: {
+                        intersect: false,
+                        mode: 'index'
+                    }
+                },
+                plugins: [Chart.registry.getPlugin('annotation')]
+            });
+        }
+        
+        // Initial render
+        renderChart('bar');
+        
+        // Chart type selector
+        document.getElementById('chartType').addEventListener('change', function() {
+            let val = this.value;
+            renderChart(val, currentMaxBars);
+        });
+        
+        // Max bars selector
+        document.getElementById('maxBars').addEventListener('change', function() {
+            currentMaxBars = this.value;
+            renderChart(document.getElementById('chartType').value, currentMaxBars);
+        });
+        
+        // Export button
+        document.getElementById('exportBtn').addEventListener('click', function() {
+            const url = chartInstance.toBase64Image();
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = 'performance_chart.png';
+            link.click();
+        });
+        
+        // Scroll controls
+        document.getElementById('scrollLeft').addEventListener('click', function() {
+            const container = document.querySelector('.chart-container');
+            const scrollAmount = Math.min(200, container.scrollLeft);
+            container.scrollBy({ left: -scrollAmount, behavior: 'smooth' });
+        });
+        
+        document.getElementById('scrollRight').addEventListener('click', function() {
+            const container = document.querySelector('.chart-container');
+            const maxScroll = container.scrollWidth - container.clientWidth;
+            const scrollAmount = Math.min(200, maxScroll - container.scrollLeft);
+            container.scrollBy({ left: scrollAmount, behavior: 'smooth' });
+        });
+        
+        // Update scroll button states based on scroll position
+        function updateScrollButtons() {
+            const container = document.querySelector('.chart-container');
+            const scrollLeftBtn = document.getElementById('scrollLeft');
+            const scrollRightBtn = document.getElementById('scrollRight');
+            
+            // Check if scrolling is possible
+            const canScrollLeft = container.scrollLeft > 0;
+            const canScrollRight = container.scrollLeft < (container.scrollWidth - container.clientWidth);
+            
+            // Update button appearance instead of disabling
+            scrollLeftBtn.classList.toggle('btn-outline-secondary', !canScrollLeft);
+            scrollLeftBtn.classList.toggle('btn-outline-primary', canScrollLeft);
+            scrollRightBtn.classList.toggle('btn-outline-secondary', !canScrollRight);
+            scrollRightBtn.classList.toggle('btn-outline-primary', canScrollRight);
+            
+            // Add visual feedback
+            if (!canScrollLeft) {
+                scrollLeftBtn.title = 'Already at the beginning';
+            } else {
+                scrollLeftBtn.title = 'Scroll left';
+            }
+            
+            if (!canScrollRight) {
+                scrollRightBtn.title = 'Already at the end';
+            } else {
+                scrollRightBtn.title = 'Scroll right';
+            }
+        }
+        
+        // Listen for scroll events to update button states
+        document.querySelector('.chart-container').addEventListener('scroll', updateScrollButtons);
+        
+        // Initial button state update
+        setTimeout(updateScrollButtons, 100);
+    {% endif %}
+</script>
+{% endblock %}
