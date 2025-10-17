@@ -1,0 +1,29 @@
+{% extends 'base.html' %}
+
+{% block title %}Search Result{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center align-items-center" style="min-height: 60vh;">
+  <div class="col-lg-6">
+    <div class="card shadow-sm p-4 text-center">
+      {% if packer %}
+        <div class="alert alert-success mb-3 fs-5">
+          <span class="text-primary">Transaction <strong>{{ transaction }}</strong> was packed by <strong>{{ packer }}</strong>.</span>
+          <div class="mt-2">
+            <span class="fw-bold">Date/Time:</span> {{ timestamp }}<br>
+            <span class="fw-bold">Case Count:</span> {{ case_count }}
+          </div>
+        </div>
+      {% else %}
+        <div class="alert alert-danger mb-3 fs-5">
+          <span class="text-danger">Transaction <strong>{{ transaction }}</strong> was not found.</span>
+        </div>
+      {% endif %}
+      <div class="mt-4">
+        <a href="/search" class="btn btn-info me-2">Search Again</a>
+        <a href="/" class="btn btn-secondary">Go Home</a>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

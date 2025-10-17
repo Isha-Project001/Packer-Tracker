@@ -1,0 +1,181 @@
+{% extends 'base.html' %}
+
+{% block title %}Help{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-lg-10">
+    <div class="card shadow-sm p-4 mb-4">
+      <h2 class="mb-3 text-primary">Help & User Guide</h2>
+      <p class="lead">Welcome to the Packer App! This comprehensive application helps you track, analyze, and optimize packed orders with advanced features for performance monitoring and team recognition.</p>
+      
+      <!-- Core Features -->
+      <h4 class="text-primary mt-4 mb-3">📦 Core Features</h4>
+      <div class="row">
+        <div class="col-md-6">
+          <div class="card mb-3">
+            <div class="card-body">
+              <h6 class="card-title"><i class="bi bi-plus-circle"></i> Enter Packed Order</h6>
+              <p class="card-text small">Fill out the form with packer name, transaction number, and case count. The system prevents duplicate transaction numbers and provides real-time validation.</p>
+            </div>
+          </div>
+        </div>
+        <div class="col-md-6">
+          <div class="card mb-3">
+            <div class="card-body">
+              <h6 class="card-title"><i class="bi bi-search"></i> Search Orders</h6>
+              <p class="card-text small">Search for any order by transaction number to find who packed it, when, and how many cases were included.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Data Management -->
+      <h4 class="text-primary mt-4 mb-3">📊 Data Management</h4>
+      <div class="row">
+        <div class="col-md-6">
+          <div class="card mb-3">
+            <div class="card-body">
+              <h6 class="card-title"><i class="bi bi-table"></i> Dashboard</h6>
+              <p class="card-text small">View all packed orders with advanced filtering by transaction number, packer name, date range, or case count. Includes pagination for easy navigation.</p>
+            </div>
+          </div>
+        </div>
+        <div class="col-md-6">
+          <div class="card mb-3">
+            <div class="card-body">
+              <h6 class="card-title"><i class="bi bi-download"></i> Export Data</h6>
+              <p class="card-text small">Export data as CSV files with options to export all filtered data or just the current page. Available on Dashboard and Performance pages.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Performance & Analytics -->
+      <h4 class="text-primary mt-4 mb-3">📈 Performance & Analytics</h4>
+      <div class="row">
+        <div class="col-md-6">
+          <div class="card mb-3">
+            <div class="card-body">
+              <h6 class="card-title"><i class="bi bi-graph-up"></i> Performance Summary</h6>
+              <p class="card-text small">View summary tables showing cases packed per day and per packer. Includes total cases, unique packers, averages, and best/worst performers.</p>
+            </div>
+          </div>
+        </div>
+        <div class="col-md-6">
+          <div class="card mb-3">
+            <div class="card-body">
+              <h6 class="card-title"><i class="bi bi-bar-chart"></i> Performance Charts</h6>
+              <p class="card-text small">Interactive charts with multiple view options (bar, line, combo). Compare single or multiple packers with average lines and export capabilities.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Advanced Analytics -->
+      <h4 class="text-primary mt-4 mb-3">🔍 Advanced Analytics</h4>
+      <div class="card mb-3">
+        <div class="card-body">
+          <h6 class="card-title"><i class="bi bi-analytics"></i> Analytics Dashboard</h6>
+          <p class="card-text">Comprehensive analytics with three main sections:</p>
+          <ul class="small">
+            <li><strong>Trends Over Time:</strong> Analyze performance trends with daily/weekly/monthly views and custom date ranges</li>
+            <li><strong>Packer Comparison:</strong> Compare packer performance across different time periods</li>
+            <li><strong>Shift Comparison:</strong> Compare performance between different shifts</li>
+          </ul>
+          <p class="card-text small">All sections support custom date ranges and multiple chart types for detailed analysis.</p>
+        </div>
+      </div>
+
+      <!-- Gamification & Recognition -->
+      <h4 class="text-primary mt-4 mb-3">🏆 Gamification & Recognition</h4>
+      <div class="row">
+        <div class="col-md-6">
+          <div class="card mb-3">
+            <div class="card-body">
+              <h6 class="card-title"><i class="bi bi-trophy"></i> Leaderboards</h6>
+              <p class="card-text small">Daily, weekly, monthly, and all-time leaderboards with shift and date range filters. Top performers are highlighted with special recognition.</p>
+            </div>
+          </div>
+        </div>
+        <div class="col-md-6">
+          <div class="card mb-3">
+            <div class="card-body">
+              <h6 class="card-title"><i class="bi bi-award"></i> Badges & Recognition</h6>
+              <p class="card-text small">Automatic badge system including "1000 Club", "Legend", and "Most Improved" awards. Recognition wall for recent achievements.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Personal Stats -->
+      <h4 class="text-primary mt-4 mb-3">👤 Personal Statistics</h4>
+      <div class="card mb-3">
+        <div class="card-body">
+          <h6 class="card-title"><i class="bi bi-person-lines-fill"></i> Individual Performance</h6>
+          <p class="card-text">Access detailed personal statistics for any packer including:</p>
+          <ul class="small">
+            <li>Total cases packed</li>
+            <li>Best day performance</li>
+            <li>Average cases per day</li>
+            <li>Current streak</li>
+            <li>30-day trend chart</li>
+            <li>All-time rank among packers</li>
+            <li>Personal badges earned</li>
+          </ul>
+          <p class="card-text small">Access via the Leaderboard page → "My Stats" button → select any packer name.</p>
+        </div>
+      </div>
+
+      <!-- Manager Features -->
+      <h4 class="text-primary mt-4 mb-3">⚙️ Manager Features</h4>
+      <div class="row">
+        <div class="col-md-6">
+          <div class="card mb-3">
+            <div class="card-body">
+              <h6 class="card-title"><i class="bi bi-pencil-square"></i> Edit & Delete</h6>
+              <p class="card-text small">Managers can edit or delete records using the buttons in the dashboard. Requires manager authentication via login.</p>
+            </div>
+          </div>
+        </div>
+        <div class="col-md-6">
+          <div class="card mb-3">
+            <div class="card-body">
+              <h6 class="card-title"><i class="bi bi-envelope"></i> Automated Reports</h6>
+              <p class="card-text small">Daily shift summaries automatically emailed to managers at 3:30 PM and 11:58 PM (Monday-Saturday only).</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+
+
+      <!-- Tips & Best Practices -->
+      <h4 class="text-primary mt-4 mb-3">💡 Tips & Best Practices</h4>
+      <div class="alert alert-info">
+        <h6><i class="bi bi-lightbulb"></i> Quick Tips:</h6>
+        <ul class="mb-0 small">
+          <li>Use the search function to quickly find specific orders</li>
+          <li>Export data regularly for backup and analysis</li>
+          <li>Check the leaderboard to stay motivated and track progress</li>
+          <li>Use analytics to identify trends and optimize performance</li>
+          <li>Managers should review automated reports daily</li>
+          <li>Use filters to focus on specific time periods or packers</li>
+        </ul>
+      </div>
+
+      <!-- Support -->
+      <h4 class="text-primary mt-4 mb-3">🆘 Support</h4>
+      <div class="alert alert-warning">
+        <strong>Need help?</strong> Contact your system administrator or support team for technical assistance, password resets, or feature requests.
+      </div>
+
+      <div class="text-center mt-4">
+        <a href="/" class="btn btn-primary btn-lg">
+          <i class="bi bi-house"></i> Back to Home
+        </a>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %} 

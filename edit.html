@@ -1,0 +1,56 @@
+{% extends 'base.html' %}
+
+{% block title %}Edit Packed Order{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-lg-6">
+    <div class="card shadow-sm p-4">
+      <h2 class="mb-3 text-warning">Edit Packed Order</h2>
+      {% if error_message %}
+        <div class="alert alert-danger">{{ error_message }}</div>
+      {% endif %}
+      <form method="POST" action="/edit/{{ id }}?manager_pass={{ manager_password }}" novalidate class="needs-validation">
+        <div class="mb-3">
+          <label for="transaction_number" class="form-label">Transaction Number</label>
+          <input type="text" id="transaction_number" name="transaction_number" class="form-control" value="{{ transaction_number }}" readonly>
+          <small class="text-muted">Transaction Number cannot be changed.</small>
+        </div>
+        <div class="mb-3">
+          <label for="packer_name" class="form-label">Packer Name</label>
+          <input type="text" id="packer_name" name="packer_name" class="form-control" value="{{ packer_name }}" required>
+          <div class="invalid-feedback">Please enter the packer name.</div>
+        </div>
+        <div class="mb-3">
+          <label for="timestamp" class="form-label">Timestamp</label>
+          <input type="text" id="timestamp" name="timestamp" class="form-control" value="{{ timestamp }}" readonly>
+          <small class="text-muted">Timestamp cannot be changed.</small>
+        </div>
+        <div class="mb-3">
+          <label for="case_count" class="form-label">Case Count</label>
+          <input type="number" id="case_count" name="case_count" class="form-control" value="{{ case_count }}" required min="0">
+          <div class="invalid-feedback">Please enter a valid case count.</div>
+        </div>
+        <button type="submit" class="btn btn-primary w-100">Save Changes</button>
+        <a href="/dashboard?manager_pass={{ manager_password }}" class="btn btn-secondary w-100 mt-2">Cancel</a>
+      </form>
+    </div>
+  </div>
+</div>
+<script>
+// Bootstrap validation
+(function () {
+  'use strict';
+  var forms = document.querySelectorAll('.needs-validation');
+  Array.prototype.slice.call(forms).forEach(function (form) {
+    form.addEventListener('submit', function (event) {
+      if (!form.checkValidity()) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+      form.classList.add('was-validated');
+    }, false);
+  });
+})();
+</script>
+{% endblock %}

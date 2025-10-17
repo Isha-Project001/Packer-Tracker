@@ -1,0 +1,147 @@
+<!-- templates/home.html -->
+{% extends 'base.html' %}
+
+{% block title %}Packer Entry & Search{% endblock %}
+
+{% block content %}
+<!-- Page Header -->
+<div class="page-header">
+    <div class="container">
+        <h1><img src="{{ url_for('static', filename='logo.png') }}" alt="Logo" height="40" class="d-inline-block align-text-top me-3">Packer Entry & Search</h1>
+        <p class="lead mb-0">Track and manage your warehouse operations efficiently</p>
+    </div>
+</div>
+
+<div class="row justify-content-center page-fade" id="homePageFade">
+  <div class="col-lg-6 mb-4">
+    <div class="card">
+      <div class="card-header">
+        <h3 class="mb-0"><i class="fas fa-plus-circle me-2"></i>Enter Packed Order</h3>
+      </div>
+      <div class="card-body">
+        <form method="POST" action="/submit" novalidate class="needs-validation" id="orderForm">
+          <div class="form-floating mb-4">
+            <input type="text" name="packer_name" id="packer_name" class="form-control" placeholder="Packer Name" required>
+            <label for="packer_name"><i class="fas fa-user me-2"></i>Packer Name</label>
+            <div class="invalid-feedback">Please enter the packer name.</div>
+          </div>
+          <div class="form-floating mb-4">
+            <input type="text" name="transaction_number" id="transaction_number" class="form-control" placeholder="Transaction Number" required>
+            <label for="transaction_number"><i class="fas fa-hashtag me-2"></i>Transaction Number</label>
+            <div class="invalid-feedback" id="transaction-feedback">Please enter the transaction number.</div>
+          </div>
+          <div class="form-floating mb-4">
+            <input type="number" name="case_count" id="case_count" class="form-control" placeholder="Case Count" required min="1">
+            <label for="case_count"><i class="fas fa-boxes me-2"></i>Case Count</label>
+            <div class="invalid-feedback">Please enter a valid case count.</div>
+          </div>
+          <button type="submit" class="btn btn-primary w-100" id="orderSubmitBtn">
+            <span id="orderBtnText"><i class="fas fa-paper-plane me-2"></i>Submit Order</span>
+            <span id="orderBtnSpinner" class="spinner-border spinner-border-sm d-none" role="status" aria-hidden="true"></span>
+          </button>
+        </form>
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-6 mb-4">
+    <div class="card">
+      <div class="card-header">
+        <h3 class="mb-0"><i class="fas fa-search me-2"></i>Search Packed Order</h3>
+      </div>
+      <div class="card-body">
+        <form method="POST" action="/" novalidate class="needs-validation" id="searchForm">
+          <div class="form-floating mb-4">
+            <input type="text" name="transaction_number" id="search_transaction" class="form-control" placeholder="Transaction Number" required>
+            <label for="search_transaction"><i class="fas fa-hashtag me-2"></i>Transaction Number</label>
+            <div class="invalid-feedback">Please enter a transaction number.</div>
+          </div>
+          <button type="submit" class="btn btn-info w-100" id="searchSubmitBtn">
+            <span id="searchBtnText"><i class="fas fa-search me-2"></i>Search</span>
+            <span id="searchBtnSpinner" class="spinner-border spinner-border-sm d-none" role="status" aria-hidden="true"></span>
+          </button>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+
+
+
+<script>
+// Page fade-in
+window.addEventListener('DOMContentLoaded', function() {
+  setTimeout(function() {
+    document.getElementById('homePageFade').classList.add('page-fade-in');
+  }, 50);
+});
+
+// Bootstrap validation and inline validation
+(function () {
+  'use strict';
+  var form = document.getElementById('orderForm');
+  var searchForm = document.getElementById('searchForm');
+  var transactionInput = document.getElementById('transaction_number');
+  var transactionFeedback = document.getElementById('transaction-feedback');
+
+  // Inline validation for all fields
+  form.querySelectorAll('input').forEach(function(input) {
+    input.addEventListener('input', function() {
+      if (input.checkValidity()) {
+        input.classList.remove('is-invalid');
+        input.classList.add('is-valid');
+      } else {
+        input.classList.remove('is-valid');
+        input.classList.add('is-invalid');
+      }
+    });
+  });
+
+  // Optionally, AJAX check for duplicate transaction number
+  transactionInput.addEventListener('blur', function() {
+    var value = transactionInput.value.trim();
+    if (value) {
+      fetch('/check_transaction?transaction_number=' + encodeURIComponent(value))
+        .then(response => response.json())
+        .then(data => {
+          if (data.exists) {
+            transactionInput.classList.add('is-invalid');
+            transactionFeedback.textContent = 'Transaction number already exists. Please enter a unique transaction number.';
+          } else {
+            if (transactionInput.checkValidity()) {
+              transactionInput.classList.remove('is-invalid');
+              transactionInput.classList.add('is-valid');
+              transactionFeedback.textContent = 'Please enter the transaction number.';
+            }
+          }
+        });
+    }
+  });
+
+  form.addEventListener('submit', function (event) {
+    if (!form.checkValidity()) {
+      event.preventDefault();
+      event.stopPropagation();
+    } else {
+      showLogoSpinner();
+      document.getElementById('orderBtnText').classList.add('d-none');
+      document.getElementById('orderBtnSpinner').classList.remove('d-none');
+    }
+    form.classList.add('was-validated');
+  }, false);
+
+  if (searchForm) {
+    searchForm.addEventListener('submit', function(event) {
+      if (!searchForm.checkValidity()) {
+        event.preventDefault();
+        event.stopPropagation();
+      } else {
+        showLogoSpinner();
+        document.getElementById('searchBtnText').classList.add('d-none');
+        document.getElementById('searchBtnSpinner').classList.remove('d-none');
+      }
+      searchForm.classList.add('was-validated');
+    }, false);
+  }
+})();
+</script>
+{% endblock %}

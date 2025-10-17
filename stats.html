@@ -1,0 +1,73 @@
+{% extends 'base.html' %}
+{% block title %}{{ packer_name }}'s Stats{% endblock %}
+{% block content %}
+<div class="container py-4">
+  <h2 class="mb-4 text-primary">{{ packer_name }}'s Personal Stats</h2>
+  <div class="row g-4 mb-4">
+    <div class="col-md-3">
+      <div class="card shadow-sm p-3 text-center">
+        <div class="fs-1 fw-bold text-success">{{ total_cases }}</div>
+        <div class="fw-semibold">Total Cases Packed</div>
+      </div>
+    </div>
+    <div class="col-md-3">
+      <div class="card shadow-sm p-3 text-center">
+        <div class="fs-3 fw-bold text-primary">{{ avg_per_day }}</div>
+        <div class="fw-semibold">Average per Day</div>
+      </div>
+    </div>
+    <div class="col-md-3">
+      <div class="card shadow-sm p-3 text-center">
+        <div class="fs-3 fw-bold text-warning">{{ streak }}</div>
+        <div class="fw-semibold">Current Streak (days)</div>
+      </div>
+    </div>
+    <div class="col-md-3">
+      <div class="card shadow-sm p-3 text-center">
+        <div class="fs-3 fw-bold text-info">#{{ rank }}</div>
+        <div class="fw-semibold">Leaderboard Rank (of {{ total_packers }})</div>
+      </div>
+    </div>
+  </div>
+  <div class="row g-4 mb-4">
+    <div class="col-md-6">
+      <div class="card shadow-sm p-3">
+        <h4 class="fw-bold mb-3">Badges</h4>
+        {% if badges %}
+          {% for badge in badges %}
+            <span class="badge bg-success fs-5 me-2 mb-2">{{ badge }}</span>
+          {% endfor %}
+        {% else %}
+          <span class="text-muted">No badges yet. Keep packing!</span>
+        {% endif %}
+      </div>
+    </div>
+    <div class="col-md-6">
+      <div class="card shadow-sm p-3">
+        <h4 class="fw-bold mb-3">Best Day</h4>
+        {% if best_day %}
+          <div class="fs-5">{{ best_day[0] }}: <span class="fw-bold text-success">{{ best_day[1] }}</span> cases</div>
+        {% else %}
+          <span class="text-muted">No data yet.</span>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+  <div class="card shadow-sm p-4 mb-4">
+    <h4 class="fw-bold mb-3">30-Day Packing Trend</h4>
+    <div id="trendChart" style="height: 350px;"></div>
+  </div>
+</div>
+<script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+<script>
+var trendData = [{
+  x: {{ trend|map(attribute=0)|list|tojson }},
+  y: {{ trend|map(attribute=1)|list|tojson }},
+  type: 'bar',
+  marker: {color: '#2563eb'},
+  name: 'Cases Packed'
+}];
+var layout = {title: '', xaxis: {title: 'Date'}, yaxis: {title: 'Cases Packed'}, autosize: true};
+Plotly.newPlot('trendChart', trendData, layout, {responsive: true});
+</script>
+{% endblock %} 

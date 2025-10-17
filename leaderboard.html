@@ -1,0 +1,153 @@
+{% extends 'base.html' %}
+{% block title %}Leaderboard & Recognition{% endblock %}
+{% block content %}
+<div class="container py-4">
+  <h2 class="mb-4 text-primary">Leaderboard & Recognition</h2>
+</div>
+  <ul class="nav nav-tabs mb-4" id="leaderboardTabs" role="tablist">
+    <li class="nav-item" role="presentation">
+      <button class="nav-link active" id="daily-tab" data-bs-toggle="tab" data-bs-target="#daily" type="button" role="tab">Daily</button>
+    </li>
+    <li class="nav-item" role="presentation">
+      <button class="nav-link" id="weekly-tab" data-bs-toggle="tab" data-bs-target="#weekly" type="button" role="tab">Weekly</button>
+    </li>
+    <li class="nav-item" role="presentation">
+      <button class="nav-link" id="monthly-tab" data-bs-toggle="tab" data-bs-target="#monthly" type="button" role="tab">Monthly</button>
+    </li>
+    <li class="nav-item" role="presentation">
+      <button class="nav-link" id="alltime-tab" data-bs-toggle="tab" data-bs-target="#alltime" type="button" role="tab">All-Time</button>
+    </li>
+  </ul>
+  <div class="tab-content" id="leaderboardTabsContent">
+    {% for period in ['daily', 'weekly', 'monthly', 'alltime'] %}
+    <div class="tab-pane fade {% if loop.first %}show active{% endif %}" id="{{ period }}" role="tabpanel">
+      <form method="get" action="/leaderboard" class="row g-3 align-items-end mb-3">
+        <input type="hidden" name="tab" value="{{ period }}">
+        <div class="col-auto">
+          <label for="shift_{{ period }}" class="form-label">Shift:</label>
+          <select id="shift_{{ period }}" name="shift" class="form-select">
+            <option value="">All</option>
+            <option value="Shift 1 (7:00-15:30)" {% if request.args.get('shift') == 'Shift 1 (7:00-15:30)' %}selected{% endif %}>Shift 1 (7:00-15:30)</option>
+            <option value="Shift 2 (15:30-00:00)" {% if request.args.get('shift') == 'Shift 2 (15:30-00:00)' %}selected{% endif %}>Shift 2 (15:30-00:00)</option>
+          </select>
+        </div>
+        <div class="col-auto">
+          <label for="start_date_{{ period }}" class="form-label">Start Date:</label>
+          <input type="date" id="start_date_{{ period }}" name="start_date" class="form-control" value="{{ request.args.get('start_date', '') }}">
+        </div>
+        <div class="col-auto">
+          <label for="end_date_{{ period }}" class="form-label">End Date:</label>
+          <input type="date" id="end_date_{{ period }}" name="end_date" class="form-control" value="{{ request.args.get('end_date', '') }}">
+        </div>
+        <div class="col-auto">
+          <button type="submit" class="btn btn-primary">Filter</button>
+        </div>
+        <div class="col-auto">
+          <a href="/leaderboard?tab={{ period }}" class="btn btn-secondary">Clear</a>
+        </div>
+      </form>
+      <div class="table-responsive mb-4">
+        <table class="table table-hover align-middle leaderboard-table">
+          <thead class="table-light">
+            <tr>
+              <th>Rank</th>
+              <th>Packer</th>
+              <th>Cases Packed</th>
+              <th>Badges</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for entry in leaderboard[period] %}
+            <tr class="{% if loop.index0 == 0 %}table-warning fw-bold{% elif loop.index0 == 1 %}table-info fw-bold{% elif loop.index0 == 2 %}table-success fw-bold{% endif %}">
+              <td>{{ loop.index }}</td>
+              <td>{{ entry.packer_name }}</td>
+              <td>{{ entry.cases_packed }}</td>
+              <td>
+                {% for badge in entry.badges %}
+                  <span class="badge bg-success me-1">{{ badge }}</span>
+                {% endfor %}
+              </td>
+            </tr>
+            {% else %}
+            <tr><td colspan="4" class="text-center">No data available.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  <hr class="my-5">
+  <h3 class="mb-3 text-primary">Recognition Wall</h3>
+  <div class="recognition-wall mb-4">
+    {% for achievement in recent_achievements %}
+      <div class="alert alert-success mb-2">
+        <i class="bi bi-trophy-fill text-warning"></i> {{ achievement }}
+      </div>
+    {% else %}
+      <div class="alert alert-info">No recent achievements yet. Stay tuned!</div>
+    {% endfor %}
+    {% if session.manager_authenticated %}
+    <form method="post" action="/leaderboard/shoutout" class="mt-4">
+      <div class="input-group">
+        <input type="text" name="shoutout" class="form-control" placeholder="Manager shout-out..." required maxlength="120">
+        <button class="btn btn-primary" type="submit">Post</button>
+      </div>
+    </form>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}
+<!-- Modal for packer selection: must be inside block content for context -->
+{% block modal %}
+<div class="modal fade" id="packerStatsModal" tabindex="-1" aria-labelledby="packerStatsModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header bg-primary text-white">
+        <h5 class="modal-title" id="packerStatsModalLabel">Select a Packer</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <div class="list-group gamified-packer-list">
+          {% for packer in packer_list %}
+            <a href="/stats/{{ packer }}" class="list-group-item list-group-item-action d-flex align-items-center fs-5 py-3 packer-link">
+              <i class="bi bi-person-circle me-3 text-primary fs-3"></i> <span class="fw-bold">{{ packer }}</span>
+            </a>
+          {% else %}
+            <div class="text-center text-muted">No packers found.</div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+{% block extra_js %}
+{{ super() }}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+  document.querySelectorAll('.packer-link').forEach(function(link) {
+    link.addEventListener('click', function() {
+      var modal = bootstrap.Modal.getInstance(document.getElementById('packerStatsModal'));
+      if (modal) { modal.hide(); }
+    });
+  });
+});
+</script>
+<style>
+.gamified-packer-list .list-group-item {
+  border: none;
+  border-radius: 1.5rem;
+  margin-bottom: 0.5rem;
+  background: linear-gradient(90deg, #f8fafc 0%, #e0e7ff 100%);
+  transition: transform 0.15s, box-shadow 0.15s;
+  box-shadow: 0 2px 8px rgba(37,99,235,0.08);
+}
+.gamified-packer-list .list-group-item:hover {
+  background: linear-gradient(90deg, #bae6fd 0%, #2563eb 100%);
+  color: #fff;
+  transform: scale(1.03);
+  box-shadow: 0 4px 16px rgba(37,99,235,0.18);
+}
+</style>
+{% endblock %} 

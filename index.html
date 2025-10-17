@@ -1,0 +1,50 @@
+{% extends 'base.html' %}
+
+{% block title %}Packer App - Welcome{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-lg-8 text-center">
+    <div class="card shadow-sm p-5">
+      <h1 class="mb-4 text-primary">Welcome to the Packer App</h1>
+      <p class="lead mb-4">Track and manage packed orders efficiently</p>
+      
+      <div class="row mb-4">
+        <div class="col-md-6 mb-3">
+          <a href="{{ url_for('home') }}" class="btn btn-primary btn-lg w-100">
+            <i class="fas fa-plus me-2"></i>
+            Enter Packed Order
+          </a>
+        </div>
+        <div class="col-md-6 mb-3">
+          <a href="{{ url_for('dashboard') }}" class="btn btn-secondary btn-lg w-100">
+            <i class="fas fa-chart-bar me-2"></i>
+            View Dashboard
+          </a>
+        </div>
+      </div>
+      
+      <div class="row">
+        <div class="col-md-4 mb-3">
+          <a href="{{ url_for('performance') }}" class="btn btn-info w-100">
+            <i class="fas fa-trophy me-2"></i>
+            Performance
+          </a>
+        </div>
+        <div class="col-md-4 mb-3">
+          <a href="{{ url_for('leaderboard') }}" class="btn btn-success w-100">
+            <i class="fas fa-medal me-2"></i>
+            Leaderboard
+          </a>
+        </div>
+        <div class="col-md-4 mb-3">
+          <a href="{{ url_for('analytics') }}" class="btn btn-warning w-100">
+            <i class="fas fa-chart-line me-2"></i>
+            Analytics
+          </a>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
